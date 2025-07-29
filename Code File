@@ -1,0 +1,378 @@
+#include <Servo.h>
+
+#include <TinyGPS++.h>
+
+#include <SoftwareSerial.h>
+
+
+// -------------------- GPS Module (NEO-7M) -------------------- //
+
+static const int GPS_RX = 7;  // Arduino receives GPS data (from GPS TX)
+
+static const int GPS_TX = 6;  // Arduino sends data to GPS (rarely used)
+
+static const uint32_t GPSBaud = 9600;
+
+SoftwareSerial ss(GPS_RX, GPS_TX); // GPS Serial
+
+TinyGPSPlus gps;
+
+
+// -------------------- GSM Module (SIM800L) -------------------- //
+
+const int GSM_TX = 2;  // Arduino TX to SIM800L RX
+
+const int GSM_RX = 3;  // Arduino RX from SIM800L TX
+
+SoftwareSerial mySerial( GSM_RX,GSM_TX); // SIM800L Serial
+
+
+// -------------------- Other Hardware -------------------- //
+
+const int trig_pin = 11;
+
+const int echo_pin = 5;
+
+const int buzzer = 9;
+
+const int buttonPin = 4;
+
+const int ledPin = 13;
+
+Servo myServo;
+
+float timing = 0.0;
+
+float distance = 0.0;
+
+int buttonState = 0;
+
+
+void setup() {
+
+  Serial.begin(9600);
+
+  mySerial.begin(9600);
+
+  ss.begin(GPSBaud);
+
+
+  myServo.attach(10);
+
+  pinMode(buzzer, OUTPUT);
+
+  pinMode(echo_pin, INPUT);
+
+  pinMode(trig_pin, OUTPUT);
+
+  digitalWrite(trig_pin, LOW);
+
+  pinMode(ledPin, OUTPUT);
+
+  pinMode(buttonPin, INPUT);
+
+
+  Serial.println("System Ready.");
+
+}
+
+
+void updateSerial() {
+
+  while (Serial.available()) {
+
+    mySerial.write(Serial.read());
+
+  }
+
+  while (mySerial.available()) {
+
+    Serial.write(mySerial.read());
+
+  }
+
+}
+
+
+void sendSMS(String message) {
+
+  mySerial.listen();
+
+  mySerial.println("AT");
+
+  delay(500);
+
+  mySerial.println("AT+CMGF=1");
+
+  delay(500);
+
+  mySerial.println("AT+CMGS=\"+8801730957339\""); // <- Replace with actual number
+
+  delay(500);
+
+  mySerial.print(message);
+
+  delay(500);
+
+  mySerial.write(26); // CTRL+Z
+
+  delay(5000);
+
+}
+
+
+void displayInfo() {
+
+  ss.listen();
+
+  Serial.print(F("Location: "));
+
+  if (gps.location.isValid()) {
+
+    double latitude = gps.location.lat();
+
+    double longitude = gps.location.lng();
+
+    Serial.print(latitude, 6);
+
+    Serial.print(F(","));
+
+    Serial.print(longitude, 6);
+
+
+    String googleMapsURL = "https://www.google.com/maps?q=" + String(latitude, 6) + "," + String(longitude, 6);
+
+    Serial.print(F("\nOpen the following link to see the location: "));
+
+    Serial.println(googleMapsURL);
+
+  } else {
+
+    Serial.print(F("INVALID"));
+
+    Serial.println(F("\nNo valid location data available."));
+
+  }
+
+
+  Serial.print(F("  Date/Time: "));
+
+  if (gps.date.isValid()) {
+
+    Serial.print(gps.date.month());
+
+    Serial.print(F("/"));
+
+    Serial.print(gps.date.day());
+
+    Serial.print(F("/"));
+
+    Serial.print(gps.date.year());
+
+  } else {
+
+    Serial.print(F("INVALID"));
+
+  }
+
+
+  Serial.print(F(" "));
+
+  if (gps.time.isValid()) {
+
+    if (gps.time.hour() < 10) Serial.print(F("0"));
+
+    Serial.print(gps.time.hour());
+
+    Serial.print(F(":"));
+
+    if (gps.time.minute() < 10) Serial.print(F("0"));
+
+    Serial.print(gps.time.minute());
+
+    Serial.print(F(":"));
+
+    if (gps.time.second() < 10) Serial.print(F("0"));
+
+    Serial.print(gps.time.second());
+
+    Serial.print(F("."));
+
+    if (gps.time.centisecond() < 10) Serial.print(F("0"));
+
+    Serial.print(gps.time.centisecond());
+
+  } else {
+
+    Serial.print(F("INVALID"));
+
+  }
+
+
+  Serial.println();
+
+}
+
+
+void loop() {
+
+  buttonState = digitalRead(buttonPin);
+
+
+  if (buttonState == HIGH) {
+
+    digitalWrite(ledPin, HIGH);
+
+    Serial.println("Button Pressed - Sending SMS and Collecting GPS Data...");
+
+
+    sendSMS("I'm in danger. Please help me!");  
+
+    updateSerial();// Alert message
+
+
+    // Get GPS data for 5 seconds
+
+    ss.listen();
+
+    unsigned long start = millis();
+
+    while (millis() - start < 5000) {
+
+      while (ss.available()) {
+
+        gps.encode(ss.read());
+
+      }
+
+    }
+
+
+    displayInfo();
+
+
+    if (millis() > 30000 && gps.charsProcessed() < 10) {
+
+      Serial.println(F("No GPS data detected: check wiring or baud rate."));
+
+      Serial.println(F("Ensure NEO-7M has power and clear sky view."));
+
+      delay(2000);
+
+    }
+
+  } else {
+
+    digitalWrite(ledPin, LOW);
+
+
+    // Sweep left to right
+
+    for (int angle = 0; angle <= 180; angle += 10) {
+
+      myServo.write(angle);
+
+      delay(15);
+
+
+      digitalWrite(trig_pin, LOW); delay(2);
+
+      digitalWrite(trig_pin, HIGH); delay(10);
+
+      digitalWrite(trig_pin, LOW);
+
+
+      timing = pulseIn(echo_pin, HIGH);
+
+      distance = (timing * 0.034) / 2;
+
+
+      Serial.print("Distance: ");
+
+      Serial.print(distance);
+
+      Serial.print(" cm | ");
+
+      Serial.print(distance / 2.54);
+
+      Serial.println(" in");
+
+
+      if (distance < 30) {
+
+        for (int i = 0; i < 3; i++) {
+
+          tone(buzzer, 800);
+
+          delay(150);
+
+          noTone(buzzer);
+
+          delay(100);
+
+        }
+
+      }
+
+
+      delay(100);
+
+    }
+
+
+    // Sweep right to left
+
+    for (int angle = 180; angle >= 0; angle -= 10) {
+
+      myServo.write(angle);
+
+      delay(15);
+
+
+      digitalWrite(trig_pin, LOW); delay(2);
+
+      digitalWrite(trig_pin, HIGH); delay(10);
+
+      digitalWrite(trig_pin, LOW);
+
+
+      timing = pulseIn(echo_pin, HIGH);
+
+      distance = (timing * 0.034) / 2;
+
+
+      Serial.print("Distance: ");
+
+      Serial.print(distance);
+
+      Serial.print(" cm | ");
+
+      Serial.print(distance / 2.54);
+
+      Serial.println(" in");
+
+
+      if (distance < 30) {
+
+        for (int i = 0; i < 2; i++) {
+
+          tone(buzzer, 1200);
+
+          delay(400);
+
+          noTone(buzzer);
+
+          delay(200);
+
+        }
+
+      }
+
+
+      delay(100);
+
+    }
+
+  }
+
+}
